@@ -580,6 +580,9 @@ def sync_project(project_id: str) -> dict:
         
         fetch_info = origin.fetch(env=env)
         origin.pull(env=env)
+
+        # .prism.json may change during sync; clear cache so path config reloads fresh.
+        path_config_service.clear_config_cache()
         
         return {
             "status": "success",

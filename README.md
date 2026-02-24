@@ -230,6 +230,7 @@ KiCAD-Prism/
 - [ ] KiCAD Plugin/source code edits to overlay comments on the schematic and PCB editors
 - [ ] User Permissions & Role-Based Access
 - [ ] Real-time Collaboration (WebSockets)
+- [ ] Inventree/PartDB Integration
 
 ---
 

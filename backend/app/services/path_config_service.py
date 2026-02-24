@@ -27,6 +27,7 @@ DEFAULT_PATHS = {
     "readme": "README.md",
     "jobset": "Outputs.kicad_jobset"
 }
+PATH_FIELDS = list(DEFAULT_PATHS.keys())
 
 # Common patterns for auto-detection
 DETECTION_PATTERNS = {
@@ -118,6 +119,36 @@ class ResolvedPaths(BaseModel):
 
 # Cache for project configurations
 _config_cache: Dict[str, Dict[str, Any]] = {}
+
+
+def _normalize_optional_string(value: Any) -> Any:
+    """Normalize optional string values: blank strings are treated as unset."""
+    if isinstance(value, str):
+        stripped = value.strip()
+        return stripped if stripped else None
+    return value
+
+
+def _normalize_config_values(config: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize loaded config values for path fields and project name."""
+    normalized: Dict[str, Any] = {}
+    for key, value in config.items():
+        if key in PATH_FIELDS or key == "project_name":
+            normalized[key] = _normalize_optional_string(value)
+        else:
+            normalized[key] = value
+    return normalized
+
+
+def _get_prism_mtime(project_path: str) -> Optional[float]:
+    """Return .prism.json mtime to validate cached config freshness."""
+    config_path = Path(project_path) / ".prism.json"
+    if not config_path.exists():
+        return None
+    try:
+        return config_path.stat().st_mtime
+    except OSError:
+        return None
 
 
 def _load_prism_config(project_path: str) -> Optional[Dict[str, Any]]:
@@ -336,31 +367,44 @@ def get_path_config(project_path: str, use_cache: bool = True) -> PathConfig:
         PathConfig with resolved paths
     """
     cache_key = str(Path(project_path).resolve())
+    prism_mtime = _get_prism_mtime(project_path)
     
     # Check cache
     if use_cache and cache_key in _config_cache:
-        return PathConfig(**_config_cache[cache_key])
-    
-    # 1. Try to load from .prism.json
-    explicit_config = _load_prism_config(project_path)
-    if explicit_config:
-        config = PathConfig(**explicit_config)
-        _config_cache[cache_key] = config.dict()
-        return config
-    
-    # 2. Auto-detect
+        cached_entry = _config_cache[cache_key]
+        if cached_entry.get("prism_mtime") == prism_mtime:
+            return PathConfig(**cached_entry["config"])
+
+    # 1. Auto-detect base config
     detected = detect_paths(project_path)
-    
-    # 3. Fill in defaults where detection failed
+
+    # 2. Fill in defaults where detection failed
     for key, default_value in DEFAULT_PATHS.items():
         current_value = getattr(detected, key)
         if current_value is None:
             # Don't default subsheets - None means "root directory"
             if key != "subsheets":
                 setattr(detected, key, default_value)
-    
-    _config_cache[cache_key] = detected.dict()
-    return detected
+
+    detected_dict = detected.dict()
+
+    # 3. Overlay explicit .prism.json config field-by-field
+    # Empty path fields are treated as unset and keep auto-detected/default values.
+    explicit_config = _load_prism_config(project_path) or {}
+    explicit_config = _normalize_config_values(explicit_config)
+    for key, value in explicit_config.items():
+        if key in PATH_FIELDS:
+            if value is not None:
+                detected_dict[key] = value
+        else:
+            detected_dict[key] = value
+
+    merged = PathConfig(**detected_dict)
+    _config_cache[cache_key] = {
+        "config": merged.dict(),
+        "prism_mtime": prism_mtime,
+    }
+    return merged
 
 
 def resolve_paths(project_path: str, config: Optional[PathConfig] = None) -> ResolvedPaths:
@@ -459,9 +503,7 @@ def save_path_config(project_path: str, config: PathConfig) -> None:
         existing["paths"] = {}
     
     # Path fields go under paths key
-    path_fields = ["schematic", "pcb", "subsheets", "designOutputs", "manufacturingOutputs", 
-                  "documentation", "thumbnail", "readme", "jobset"]
-    for field in path_fields:
+    for field in PATH_FIELDS:
         if field in config_dict:
             existing["paths"][field] = config_dict[field]
     
@@ -475,9 +517,8 @@ def save_path_config(project_path: str, config: PathConfig) -> None:
     with open(config_path, 'w', encoding='utf-8') as f:
         json.dump(existing, f, indent=2)
     
-    # Update cache
-    cache_key = str(Path(project_path).resolve())
-    _config_cache[cache_key] = config_dict
+    # Config file changed; force reload on next access.
+    clear_config_cache(project_path)
 
 
 def clear_config_cache(project_path: Optional[str] = None) -> None:
