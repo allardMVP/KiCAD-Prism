@@ -20,6 +20,7 @@ class Project(BaseModel):
     repo_url: Optional[str] = None  # Original Git URL
     import_type: Optional[str] = None  # "type1" or "type2_subproject"
     parent_repo_path: Optional[str] = None  # Path to parent repo for Type-2
+    folder_id: Optional[str] = None  # Optional folder assignment for workspace organization
 
 # PROJECTS_ROOT is where imported projects are stored.
 # In Docker, this should be a persistent volume mount.
@@ -58,7 +59,7 @@ def _save_project_registry(registry: Dict[str, dict]) -> None:
 
 def register_project(project_id: str, name: str, path: str, repo_url: str,
                      sub_path: Optional[str] = None, parent_repo: Optional[str] = None,
-                     description: Optional[str] = None) -> None:
+                     description: Optional[str] = None, folder_id: Optional[str] = None) -> None:
     """Register a project in the registry."""
     registry = _load_project_registry()
     
@@ -77,7 +78,8 @@ def register_project(project_id: str, name: str, path: str, repo_url: str,
         "parent_repo": parent_repo,
         "description": description or f"Project {name}",
         "last_modified": last_modified,
-        "registered_at": datetime.datetime.now().isoformat()
+        "registered_at": datetime.datetime.now().isoformat(),
+        "folder_id": folder_id
     }
     
     _save_project_registry(registry)
@@ -176,7 +178,8 @@ def get_registered_projects() -> List[Project]:
             parent_repo=data.get("parent_repo"),
             repo_url=data.get("repo_url"),
             import_type=data.get("import_type"),
-            parent_repo_path=_normalize_path(data.get("parent_repo_path")) if data.get("import_type") == "type2_subproject" else None
+            parent_repo_path=_normalize_path(data.get("parent_repo_path")) if data.get("import_type") == "type2_subproject" else None,
+            folder_id=data.get("folder_id")
         ))
     
     _projects_cache = projects
@@ -226,7 +229,8 @@ def get_project_by_id(project_id: str) -> Optional[Project]:
         parent_repo=data.get("parent_repo"),
         repo_url=data.get("repo_url"),
         import_type=data.get("import_type"),
-        parent_repo_path=_normalize_path(data.get("parent_repo_path")) if data.get("import_type") == "type2_subproject" else None
+        parent_repo_path=_normalize_path(data.get("parent_repo_path")) if data.get("import_type") == "type2_subproject" else None,
+        folder_id=data.get("folder_id")
     )
 
 import threading
@@ -685,6 +689,30 @@ def delete_project(project_id: str) -> bool:
         except Exception as e:
             print(f"Warning: Failed to delete project directory {project_path}: {e}")
     
+    # Clear projects cache so deleted entries are not returned.
+    global _projects_cache, _projects_cache_time
+    _projects_cache = []
+    _projects_cache_time = 0
+
+    return True
+
+
+def update_project_folder_id(project_id: str, folder_id: Optional[str]) -> bool:
+    """
+    Persist workspace folder assignment for a project.
+    Returns False if project does not exist.
+    """
+    registry = _load_project_registry()
+    if project_id not in registry:
+        return False
+
+    registry[project_id]["folder_id"] = folder_id
+    _save_project_registry(registry)
+
+    # Clear projects cache so subsequent reads include updated folder_id.
+    global _projects_cache, _projects_cache_time
+    _projects_cache = []
+    _projects_cache_time = 0
     return True
 
 def get_subsheets(project_path: str, main_schematic: str) -> List[str]:

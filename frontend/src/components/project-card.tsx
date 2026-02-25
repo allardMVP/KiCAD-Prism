@@ -13,6 +13,7 @@ interface ProjectCardProps {
     onDelete?: () => void;
     showDelete?: boolean;
     searchQuery?: string;
+    actions?: React.ReactNode;
 }
 
 // Highlight matched text in search results
@@ -36,7 +37,7 @@ function highlightMatch(text: string, query: string): React.ReactNode {
     );
 }
 
-export function ProjectCard({ project, compact, onClick, onDelete, showDelete, searchQuery = "" }: ProjectCardProps) {
+export function ProjectCard({ project, compact, onClick, onDelete, showDelete, searchQuery = "", actions }: ProjectCardProps) {
     const navigate = useNavigate();
 
     const thumbnailUrl = project.thumbnail_url ? project.thumbnail_url : null;
@@ -109,6 +110,14 @@ export function ProjectCard({ project, compact, onClick, onDelete, showDelete, s
                     <Badge variant="secondary" className="backdrop-blur-sm bg-background/80 border text-[10px]">
                         Git
                     </Badge>
+                    {actions ? (
+                        <div
+                            onClick={(event) => event.stopPropagation()}
+                            onPointerDown={(event) => event.stopPropagation()}
+                        >
+                            {actions}
+                        </div>
+                    ) : null}
                     {showDelete && onDelete && (
                         <Button
                             variant="ghost"
