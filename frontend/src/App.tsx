@@ -7,6 +7,9 @@ import { Button } from '@/components/ui/button';
 import { Workspace } from './components/workspace';
 import { ProjectDetailPage } from './pages/ProjectDetailPage';
 import { Toaster } from 'sonner';
+import { Input } from '@/components/ui/input';
+import { Search } from 'lucide-react';
+import prismLogoMark from './assets/branding/kicad-prism/kicad-prism-icon.svg';
 
 
 
@@ -27,6 +30,7 @@ function App() {
     });
     const [authConfig, setAuthConfig] = useState<AuthConfig | null>(null);
     const [loading, setLoading] = useState(true);
+    const [workspaceSearchQuery, setWorkspaceSearchQuery] = useState("");
 
     // Fetch auth configuration on mount
     useEffect(() => {
@@ -110,10 +114,22 @@ function App() {
                 <Route path="/" element={
                     <div className="min-h-screen bg-background text-foreground">
                         <header className="border-b sticky top-0 bg-background/95 backdrop-blur z-10">
-                            <div className="container mx-auto px-6 h-16 flex items-center justify-between">
+                            <div className="grid h-16 grid-cols-[auto_1fr_auto] items-center gap-4 px-3 md:px-4">
                                 <div className="flex items-center gap-2 text-primary">
-                                    <img src="/logo.png" alt="KiCAD Prism Logo" className="h-6 w-6 object-contain" />
+                                    <img src={prismLogoMark} alt="KiCAD Prism Logo" className="h-7 w-7 object-contain" />
                                     <span className="text-xl font-bold tracking-tight text-foreground">KiCAD Prism</span>
+                                </div>
+
+                                <div className="flex justify-center">
+                                    <div className="relative w-full max-w-2xl">
+                                        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                                        <Input
+                                            value={workspaceSearchQuery}
+                                            onChange={(event) => setWorkspaceSearchQuery(event.target.value)}
+                                            placeholder="Search projects by name, description, and metadata"
+                                            className="pl-10"
+                                        />
+                                    </div>
                                 </div>
 
                                 <div className="flex items-center gap-4">
@@ -130,8 +146,10 @@ function App() {
                             </div>
                         </header>
 
-                        <main className="container mx-auto px-6 py-8">
-                            <Workspace />
+                        <main className="h-[calc(100vh-4rem)]">
+                            <Workspace
+                                searchQuery={workspaceSearchQuery}
+                            />
                         </main>
                     </div>
                 } />

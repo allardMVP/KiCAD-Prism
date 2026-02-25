@@ -9,6 +9,25 @@ export interface Project {
     sub_path?: string;
     parent_repo?: string;
     repo_url?: string;
+    folder_id?: string | null;
+}
+
+export interface Folder {
+    id: string;
+    name: string;
+    parent_id?: string | null;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface FolderTreeItem {
+    id: string;
+    name: string;
+    parent_id?: string | null;
+    depth: number;
+    has_children: boolean;
+    direct_project_count: number;
+    total_project_count: number;
 }
 
 export interface Monorepo {

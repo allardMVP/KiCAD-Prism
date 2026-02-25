@@ -1,0 +1,268 @@
+"""
+Folder service for workspace organization.
+
+Folders are persisted separately from projects, while project assignment uses
+`project.folder_id` in the project registry as the single source of truth.
+"""
+
+from __future__ import annotations
+
+import datetime
+import json
+import os
+import uuid
+from typing import Dict, List, Optional
+
+from pydantic import BaseModel
+
+from app.services import project_service
+
+
+class Folder(BaseModel):
+    id: str
+    name: str
+    parent_id: Optional[str] = None
+    created_at: str
+    updated_at: str
+
+
+class FolderTreeItem(BaseModel):
+    id: str
+    name: str
+    parent_id: Optional[str] = None
+    depth: int = 0
+    has_children: bool = False
+    direct_project_count: int = 0
+    total_project_count: int = 0
+
+
+FOLDERS_FILE = os.path.join(
+    os.path.dirname(__file__),
+    "../../../data/projects/.folders.json",
+)
+os.makedirs(os.path.dirname(FOLDERS_FILE), exist_ok=True)
+
+UNSET = object()
+
+
+def _now_iso() -> str:
+    return datetime.datetime.now().isoformat()
+
+
+def _normalize_name(name: str) -> str:
+    normalized = (name or "").strip()
+    if not normalized:
+        raise ValueError("Folder name cannot be empty")
+    return normalized
+
+
+def _load_folders() -> Dict[str, Folder]:
+    if os.path.exists(FOLDERS_FILE):
+        try:
+            with open(FOLDERS_FILE, "r", encoding="utf-8") as f:
+                raw = json.load(f)
+            return {folder_id: Folder(**payload) for folder_id, payload in raw.items()}
+        except (json.JSONDecodeError, IOError):
+            return {}
+    return {}
+
+
+def _save_folders(folders: Dict[str, Folder]) -> None:
+    with open(FOLDERS_FILE, "w", encoding="utf-8") as f:
+        json.dump({k: v.dict() for k, v in folders.items()}, f, indent=2)
+
+
+def _children_map(folders: Dict[str, Folder]) -> Dict[Optional[str], List[str]]:
+    children: Dict[Optional[str], List[str]] = {}
+    for folder in folders.values():
+        children.setdefault(folder.parent_id, []).append(folder.id)
+    for folder_ids in children.values():
+        folder_ids.sort(key=lambda folder_id: folders[folder_id].name.lower())
+    return children
+
+
+def _descendant_ids(root_folder_id: str, children: Dict[Optional[str], List[str]]) -> List[str]:
+    stack = [root_folder_id]
+    visited = set()
+    descendants: List[str] = []
+    while stack:
+        current = stack.pop()
+        if current in visited:
+            continue
+        visited.add(current)
+        descendants.append(current)
+        stack.extend(children.get(current, []))
+    return descendants
+
+
+def _project_ids_by_folder(folders: Dict[str, Folder]) -> Dict[str, List[str]]:
+    by_folder: Dict[str, List[str]] = {folder_id: [] for folder_id in folders.keys()}
+    for project in project_service.get_registered_projects():
+        if project.folder_id and project.folder_id in by_folder:
+            by_folder[project.folder_id].append(project.id)
+    return by_folder
+
+
+def get_folder_tree() -> List[FolderTreeItem]:
+    folders = _load_folders()
+    if not folders:
+        return []
+
+    children = _children_map(folders)
+    direct_project_ids = _project_ids_by_folder(folders)
+    total_cache: Dict[str, int] = {}
+
+    def total_count(folder_id: str, visiting: Optional[set] = None) -> int:
+        active_stack = visiting or set()
+        if folder_id in active_stack:
+            # Malformed data guard: break recursion on cycles.
+            return len(direct_project_ids.get(folder_id, []))
+        if folder_id in total_cache:
+            return total_cache[folder_id]
+        count = len(direct_project_ids.get(folder_id, []))
+        active_stack.add(folder_id)
+        for child_id in children.get(folder_id, []):
+            count += total_count(child_id, active_stack)
+        active_stack.remove(folder_id)
+        total_cache[folder_id] = count
+        return count
+
+    tree_items: List[FolderTreeItem] = []
+
+    def walk(parent_id: Optional[str], depth: int, visiting: Optional[set] = None) -> None:
+        active_stack = visiting or set()
+        for folder_id in children.get(parent_id, []):
+            if folder_id in active_stack:
+                continue
+            active_stack.add(folder_id)
+            folder = folders[folder_id]
+            tree_items.append(
+                FolderTreeItem(
+                    id=folder.id,
+                    name=folder.name,
+                    parent_id=folder.parent_id,
+                    depth=depth,
+                    has_children=folder_id in children,
+                    direct_project_count=len(direct_project_ids.get(folder_id, [])),
+                    total_project_count=total_count(folder_id),
+                )
+            )
+            walk(folder_id, depth + 1, active_stack)
+            active_stack.remove(folder_id)
+
+    walk(None, 0)
+    return tree_items
+
+
+def get_folder(folder_id: str) -> Optional[Folder]:
+    return _load_folders().get(folder_id)
+
+
+def create_folder(name: str, parent_id: Optional[str] = None) -> Folder:
+    folders = _load_folders()
+    normalized_name = _normalize_name(name)
+
+    if parent_id is not None and parent_id not in folders:
+        raise ValueError("Parent folder not found")
+
+    for folder in folders.values():
+        if folder.parent_id == parent_id and folder.name.lower() == normalized_name.lower():
+            raise ValueError("A folder with this name already exists in this location")
+
+    now = _now_iso()
+    folder_id = f"fld_{uuid.uuid4().hex[:10]}"
+    while folder_id in folders:
+        folder_id = f"fld_{uuid.uuid4().hex[:10]}"
+
+    folder = Folder(
+        id=folder_id,
+        name=normalized_name,
+        parent_id=parent_id,
+        created_at=now,
+        updated_at=now,
+    )
+    folders[folder.id] = folder
+    _save_folders(folders)
+    return folder
+
+
+def update_folder(folder_id: str, name: Optional[str] = None, parent_id=UNSET) -> Folder:
+    folders = _load_folders()
+    folder = folders.get(folder_id)
+    if not folder:
+        raise ValueError("Folder not found")
+
+    target_parent_id = folder.parent_id if parent_id is UNSET else parent_id
+    target_name = folder.name if name is None else _normalize_name(name)
+
+    if target_parent_id is not None and target_parent_id not in folders:
+        raise ValueError("Parent folder not found")
+    if target_parent_id == folder_id:
+        raise ValueError("Folder cannot be its own parent")
+
+    children = _children_map(folders)
+    if target_parent_id is not None and target_parent_id in _descendant_ids(folder_id, children):
+        raise ValueError("Cannot move a folder into itself or its descendants")
+
+    for other in folders.values():
+        if other.id == folder_id:
+            continue
+        if other.parent_id == target_parent_id and other.name.lower() == target_name.lower():
+            raise ValueError("A folder with this name already exists in this location")
+
+    folder.name = target_name
+    folder.parent_id = target_parent_id
+    folder.updated_at = _now_iso()
+    folders[folder.id] = folder
+    _save_folders(folders)
+    return folder
+
+
+def delete_folder(folder_id: str, cascade: bool = True) -> bool:
+    folders = _load_folders()
+    if folder_id not in folders:
+        return False
+
+    children = _children_map(folders)
+    delete_ids = _descendant_ids(folder_id, children) if cascade else [folder_id]
+
+    if not cascade and folder_id in children:
+        raise ValueError("Folder has subfolders. Use cascade delete or move subfolders first.")
+
+    # Move all projects under deleted folders back to root.
+    for project in project_service.get_registered_projects():
+        if project.folder_id in delete_ids:
+            project_service.update_project_folder_id(project.id, None)
+
+    for delete_id in delete_ids:
+        folders.pop(delete_id, None)
+
+    _save_folders(folders)
+    return True
+
+
+def move_project_to_folder(project_id: str, folder_id: Optional[str]) -> None:
+    if folder_id is not None and folder_id not in _load_folders():
+        raise ValueError("Folder not found")
+    if not project_service.update_project_folder_id(project_id, folder_id):
+        raise ValueError("Project not found")
+
+
+def get_folder_contents(folder_id: Optional[str]) -> dict:
+    folders = _load_folders()
+    if folder_id is not None and folder_id not in folders:
+        raise ValueError("Folder not found")
+
+    children = sorted(
+        [folder for folder in folders.values() if folder.parent_id == folder_id],
+        key=lambda folder: folder.name.lower(),
+    )
+    projects = sorted(
+        [project for project in project_service.get_registered_projects() if project.folder_id == folder_id],
+        key=lambda project: (project.display_name or project.name).lower(),
+    )
+
+    return {
+        "folders": [folder.dict() for folder in children],
+        "projects": [project.dict() for project in projects],
+    }
