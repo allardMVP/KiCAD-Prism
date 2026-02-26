@@ -1,4 +1,4 @@
-import { useEffect, useState, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
 
 import { isDialogSubmitShortcut } from "@/lib/dialog-shortcuts";
 import { FolderTreeItem, Project } from "@/types/project";
@@ -32,6 +32,60 @@ export function MoveProjectDialog({
   getProjectDisplayName,
 }: MoveProjectDialogProps) {
   const [targetFolderId, setTargetFolderId] = useState(ROOT_VALUE);
+
+  const folderPathById = useMemo(() => {
+    const folderById = new Map(folders.map((folder) => [folder.id, folder]));
+    const paths = new Map<string, string>();
+    const MAX_DEPTH = 64;
+
+    const buildPath = (folderId: string): string => {
+      const cached = paths.get(folderId);
+      if (cached) {
+        return cached;
+      }
+
+      const names: string[] = [];
+      const visited = new Set<string>();
+      let currentId: string | null = folderId;
+      let depth = 0;
+
+      while (currentId && depth < MAX_DEPTH) {
+        if (visited.has(currentId)) {
+          const fallback = folderById.get(folderId)?.name ?? folderId;
+          paths.set(folderId, fallback);
+          return fallback;
+        }
+
+        visited.add(currentId);
+        const folder = folderById.get(currentId);
+        if (!folder) {
+          const fallback = folderById.get(folderId)?.name ?? folderId;
+          paths.set(folderId, fallback);
+          return fallback;
+        }
+
+        names.unshift(folder.name);
+        currentId = folder.parent_id ?? null;
+        depth += 1;
+      }
+
+      if (depth >= MAX_DEPTH) {
+        const fallback = folderById.get(folderId)?.name ?? folderId;
+        paths.set(folderId, fallback);
+        return fallback;
+      }
+
+      const resolvedPath = names.length > 0 ? names.join(" / ") : folderById.get(folderId)?.name ?? folderId;
+      paths.set(folderId, resolvedPath);
+      return resolvedPath;
+    };
+
+    folders.forEach((folder) => {
+      buildPath(folder.id);
+    });
+
+    return paths;
+  }, [folders]);
 
   useEffect(() => {
     setTargetFolderId(project?.folder_id ?? ROOT_VALUE);
@@ -77,7 +131,7 @@ export function MoveProjectDialog({
             <option value={ROOT_VALUE}>Workspace Root</option>
             {folders.map((folder) => (
               <option key={folder.id} value={folder.id}>
-                {`${"  ".repeat(folder.depth)}${folder.name}`}
+                {folderPathById.get(folder.id) ?? folder.name}
               </option>
             ))}
           </select>
