@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { toast } from "sonner";
 
@@ -30,13 +30,13 @@ interface WorkspaceProps {
 
 export function Workspace({ searchQuery }: WorkspaceProps) {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const { projects, folders, loading, error, folderById, refresh, createFolder, renameFolder, deleteFolder, moveProject, deleteProject } =
     useWorkspaceData();
 
   const [section, setSection] = useState<WorkspaceSection>("projects");
   const [viewMode, setViewMode] = useState<ViewMode>("gallery");
-  const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 
   const [isImportOpen, setIsImportOpen] = useState(false);
@@ -58,12 +58,32 @@ export function Workspace({ searchQuery }: WorkspaceProps) {
   const [isDeletingProject, setIsDeletingProject] = useState(false);
 
   const getProjectDisplayName = (project: Project) => project.display_name || project.name;
+  const folderFromUrl = searchParams.get("folder");
+  const currentFolderId = folderFromUrl && folderById.has(folderFromUrl) ? folderFromUrl : null;
+
+  const setFolderInUrl = useCallback(
+    (folderId: string | null, replace = false) => {
+      setSearchParams(
+        (currentParams) => {
+          const nextParams = new URLSearchParams(currentParams);
+          if (folderId) {
+            nextParams.set("folder", folderId);
+          } else {
+            nextParams.delete("folder");
+          }
+          return nextParams;
+        },
+        { replace }
+      );
+    },
+    [setSearchParams]
+  );
 
   useEffect(() => {
-    if (currentFolderId && !folderById.has(currentFolderId)) {
-      setCurrentFolderId(null);
+    if (!loading && folderFromUrl && !folderById.has(folderFromUrl)) {
+      setFolderInUrl(null, true);
     }
-  }, [currentFolderId, folderById]);
+  }, [loading, folderFromUrl, folderById, setFolderInUrl]);
 
   const visibleFolders = useMemo(() => {
     return folders
@@ -237,8 +257,8 @@ export function Workspace({ searchQuery }: WorkspaceProps) {
                   isSearching={isSearching}
                   breadcrumbs={breadcrumbs}
                   viewMode={viewMode}
-                  onGoRoot={() => setCurrentFolderId(null)}
-                  onSelectFolder={setCurrentFolderId}
+                  onGoRoot={() => setFolderInUrl(null)}
+                  onSelectFolder={(folderId) => setFolderInUrl(folderId)}
                 />
 
                 {viewMode === "gallery" ? (
@@ -251,7 +271,7 @@ export function Workspace({ searchQuery }: WorkspaceProps) {
                     visibleProjects={visibleProjects}
                     getProjectDisplayName={getProjectDisplayName}
                     onOpenProject={openProject}
-                    onOpenFolder={setCurrentFolderId}
+                    onOpenFolder={(folderId) => setFolderInUrl(folderId)}
                     onRenameFolder={setFolderToRename}
                     onDeleteFolder={setFolderToDelete}
                     onMoveProject={setProjectToMove}
@@ -266,7 +286,7 @@ export function Workspace({ searchQuery }: WorkspaceProps) {
                     listProjects={listProjects}
                     getProjectDisplayName={getProjectDisplayName}
                     onOpenProject={openProject}
-                    onOpenFolder={setCurrentFolderId}
+                    onOpenFolder={(folderId) => setFolderInUrl(folderId)}
                     onRenameFolder={setFolderToRename}
                     onDeleteFolder={setFolderToDelete}
                     onMoveProject={setProjectToMove}
