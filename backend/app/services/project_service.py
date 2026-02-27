@@ -448,10 +448,26 @@ def _run_workflow_job(job_id: str, project_id: str, workflow_type: str):
         else:
             raise ValueError(f"Unknown workflow type: {workflow_type}")
 
-        jobset_file = "Outputs.kicad_jobset"
-        # Check if jobset exists
-        if not os.path.exists(os.path.join(project.path, jobset_file)):
-             raise ValueError(f"{jobset_file} not found in project root")
+        # Resolve workflow jobset from project settings (.prism.json) / auto-detection.
+        config = path_config_service.get_path_config(project.path)
+        resolved_paths = path_config_service.resolve_paths(project.path, config)
+        jobset_path = resolved_paths.jobset_path
+        configured_jobset = config.jobset or "Outputs.kicad_jobset"
+
+        if not jobset_path:
+            raise ValueError(f"{configured_jobset} not found in project root")
+
+        # Prefer a path relative to project root for CLI invocation/log readability.
+        try:
+            project_root_abs = os.path.abspath(project.path)
+            jobset_abs = os.path.abspath(jobset_path)
+            if os.path.commonpath([project_root_abs, jobset_abs]) == project_root_abs:
+                jobset_file = os.path.relpath(jobset_abs, project_root_abs)
+            else:
+                jobset_file = jobset_path
+        except ValueError:
+            # Fallback for uncommon path edge cases (e.g., different mount roots).
+            jobset_file = jobset_path
 
         cmd = [
             cli_path,
